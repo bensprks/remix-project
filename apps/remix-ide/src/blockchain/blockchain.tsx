@@ -962,6 +962,9 @@ export class Blockchain extends Plugin {
         const compiledContracts = await this.call('compilerArtefacts', 'getAllContractDatas')
         return txExecution.checkError({ errorMessage, errorData }, compiledContracts)
       }
+      // a reverted call is reported as a provider error, so its custom error is decoded from the revert data.
+      const revertData = txExecution.getRevertData(error)
+      if (revertData) throw new Error((await buildError('execution reverted', revertData)).message)
       let errorMessage
       let errorData
       if (error.innerError) {

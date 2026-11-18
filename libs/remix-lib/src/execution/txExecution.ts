@@ -53,6 +53,23 @@ export function callFunction ({ from, to, data, value, gasLimit, signed, authori
 }
 
 /**
+  * find the revert data of a failed call or gas estimation.
+  * Providers report it on the JSON-RPC error, which ethers and wallets wrap at varying depths.
+  *
+  * @param {Object} error    - error thrown while running a call or a transaction
+  * @return {String|null} - hex encoded revert data starting with the error selector
+  */
+export function getRevertData (error, depth = 0): string | null {
+  if (!error || typeof error !== 'object' || depth > 4) return null
+  if (typeof error.data === 'string' && /^0x([0-9a-f]{2}){4,}$/i.test(error.data)) return error.data
+  for (const key of ['info', 'error', 'data', 'innerError', 'originalError']) {
+    const data = getRevertData(error[key], depth + 1)
+    if (data) return data
+  }
+  return null
+}
+
+/**
   * check if the vm has errored
   *
   * @param {Object} execResult    - execution result given by the VM, contain errorMessage and errorDate

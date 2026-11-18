@@ -1,5 +1,6 @@
 import { Provider } from '@remix-project/remix-simulator'
 import { MonadProvider, isMonadSpec } from '@remix-project/remix-monad'
+import { serializeRpcError } from './worker-rpc-error'
 
 let provider: Provider | MonadProvider = null
 self.onmessage = (e: MessageEvent) => {
@@ -18,7 +19,7 @@ self.onmessage = (e: MessageEvent) => {
     }).catch((error) => {
       self.postMessage({
         cmd: 'initiateResult',
-        error,
+        error: serializeRpcError(error),
         stamp: data.stamp
       })
     })
@@ -30,7 +31,7 @@ self.onmessage = (e: MessageEvent) => {
       provider.sendAsync(data.query, (error, result) => {
         self.postMessage({
           cmd: 'sendAsyncResult',
-          error,
+          error: serializeRpcError(error),
           result,
           stamp: data.stamp
         })
@@ -61,7 +62,7 @@ self.onmessage = (e: MessageEvent) => {
         }).catch((error) => {
           self.postMessage({
             cmd: 'requestResult',
-            error: error,
+            error: serializeRpcError(error),
             result: null,
             stamp: stamp
           })
@@ -92,7 +93,7 @@ self.onmessage = (e: MessageEvent) => {
         if (error) {
           self.postMessage({
             cmd: 'newAccountResult',
-            error,
+            error: serializeRpcError(error),
             stamp: data.stamp
           })
         } else {

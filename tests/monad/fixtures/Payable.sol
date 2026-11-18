@@ -15,3 +15,11 @@ contract Payable {
         chainId = block.chainid;
     }
 }
+
+contract Reverting {
+    error ExpectedRevert(uint256 code);
+
+    function fail() external pure {
+        revert ExpectedRevert(7);
+    }
+}

@@ -2,6 +2,7 @@ import { privateToAddress, bytesToHex } from '@ethereumjs/util'
 import { extendProvider, JSONRPCRequestPayload, JSONRPCResponseCallback } from '@remix-project/remix-simulator'
 import { ExecutionContext } from '../execution-context'
 import { BrowserProvider, formatUnits, ethers, hashMessage, toUtf8Bytes, keccak256 } from 'ethers'
+import { deserializeRpcError } from './worker-rpc-error'
 
 export class VMProvider {
   executionContext: ExecutionContext
@@ -37,6 +38,7 @@ export class VMProvider {
 
     return new Promise((resolve, reject) => {
       this.worker.addEventListener('message', (msg) => {
+        msg.data.error = deserializeRpcError(msg.data.error)
         if (msg.data.cmd === 'requestResult' && stamps[msg.data.stamp]) {
           if (msg.data.error) {
             stamps[msg.data.stamp].reject(msg.data.error)
@@ -78,7 +80,7 @@ export class VMProvider {
             this.executionContext.setWeb3(this.executionContext.getProvider(), this.web3)
             resolve({})
           } else {
-            reject(new Error(msg.data.error))
+            reject(msg.data.error instanceof Error ? msg.data.error : new Error(msg.data.error))
           }
         } else if (msg.data.cmd === 'newAccountResult') {
           if (this.newAccountCallback[msg.data.stamp]) {
