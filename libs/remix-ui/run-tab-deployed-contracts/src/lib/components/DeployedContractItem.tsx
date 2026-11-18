@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useState, useRef, useMemo } from 'react'
-import { isMonadSpec, monadVmLabel, monadUnitLabel } from '@remix-project/remix-monad'
+import { isMonadCurrency, isMonadSpec, monadVmLabel, monadUnitLabel } from '@remix-project/remix-monad'
 import { FormattedMessage, useIntl } from 'react-intl'
 import { CustomTooltip, getTimeAgo, shortenAddress, isNumeric, is0XPrefixed, isHexadecimal, logBuilder, extractDataDefault, getMultiValsString, isQuickDappRemixVMIdentifier, normalizeQuickDappEnvironment, Select } from '@remix-ui/helper'
 import { CopyToClipboard } from '@remix-ui/clipboard'
@@ -46,7 +46,8 @@ export function DeployedContractItem({ contract, index, collapseSignal, register
   const hasRegisterEnsAccess = features?.[Features.REGISTER_ENS]?.is_enabled === true
   const isDesktop = isElectron()
   const [networkName, setNetworkName] = useState<string>('')
-  const [isMonad, setIsMonad] = useState(false)
+  const [isMonadVM, setIsMonadVM] = useState(false)
+  const [currency, setCurrency] = useState({ symbol: 'ETH' })
   const [isExpanded, setIsExpanded] = useState<boolean>(true)
   const [contractABI, setContractABI] = useState(null)
   const [value, setValue] = useState<string>('0')
@@ -86,7 +87,10 @@ export function DeployedContractItem({ contract, index, collapseSignal, register
       if (net && net.name) {
         const fork = net.name === 'VM' ? await plugin.call('blockchain', 'getCurrentFork') : undefined
         const monad = isMonadSpec(fork)
-        setIsMonad(monad)
+        setIsMonadVM(monad)
+        // the balance and its units are shown in the native currency of the network, local or connected.
+        const nativeCurrency = await plugin.call('blockchain', 'getCurrentNetworkCurrency')
+        if (nativeCurrency?.symbol) setCurrency(nativeCurrency)
         const networkName = net.name === 'VM' ? (monad ? monadVmLabel(fork) : 'Remix VM') : net.name
 
         setNetworkName(networkName)
@@ -1155,7 +1159,7 @@ For Inline mode, preserve the existing /frontend overwrite confirmation flow. Co
               crossChainDestinations={crossChainDestinations}
               onCreateCrossChainProxy={handleCreateCrossChainProxy}
               onInteractThroughProxy={handleInteractThroughProxy}
-              onNameContract={!isMonad && networkName !== 'Remix VM' ? handleNameContract : undefined}
+              onNameContract={!isMonadVM && networkName !== 'Remix VM' ? handleNameContract : undefined}
               onCopyABI={handleCopyABI}
               onSaveABI={handleSaveABI}
               onCopyBytecode={handleCopyDeployedBytecode}
@@ -1467,7 +1471,7 @@ For Inline mode, preserve the existing /frontend overwrite confirmation flow. Co
                             compact
                             align="end"
                             value={valueUnit}
-                            options={['wei', 'gwei', 'finney', 'ether'].map((unit) => ({ value: unit, label: isMonad ? monadUnitLabel(unit) : unit }))}
+                            options={['wei', 'gwei', 'finney', 'ether'].map((unit) => ({ value: unit, label: isMonadCurrency(currency) ? monadUnitLabel(unit) : unit }))}
                             onChange={(unit) => {
                               trackMatomoEvent?.({ category: 'udapp', action: 'deployedContractValueUnitChange', name: unit, isClick: true })
                               setValueUnit(unit)
@@ -1599,7 +1603,7 @@ For Inline mode, preserve the existing /frontend overwrite confirmation flow. Co
                 <div className='d-flex align-items-center gap-1' data-id="deployedContractBal">
                   <div style={{ fontSize: '12px', fontWeight: 700, flex: 1 }}><FormattedMessage id="udapp.balanceLabel" /></div>
                   <div style={{ fontSize: '10px', color: 'var(--text-tertiary, #a2a3bd)', fontFamily: 'Monaco, monospace' }}>
-                    {contract.balance || 0} {isMonad ? 'MON' : 'ETH'}
+                    {contract.balance || 0} {currency.symbol}
                   </div>
                 </div>
               </div>
