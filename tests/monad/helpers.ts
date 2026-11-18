@@ -22,34 +22,6 @@ export const test = base.extend<{ diagnostics: void; ide: void }>({
 
 async function prepareIde(page: Page) {
   await page.addInitScript(() => {
-    const NativeWorker = window.Worker
-    const requests = new Set<Set<number>>()
-    let lastActivity = performance.now()
-    ;(window as any).__monadTestVmIdle = () => [...requests].every(pending => !pending.size) && performance.now() - lastActivity >= 500
-    // VM RPCs use worker messages, so browser network-idle checks cannot observe them.
-    window.Worker = class extends NativeWorker {
-      rpcStamps = new Set<number>()
-      constructor(url: string | URL, options?: WorkerOptions) {
-        super(url, options)
-        requests.add(this.rpcStamps)
-        this.addEventListener('message', event => {
-          if (this.rpcStamps.delete(event.data?.stamp)) lastActivity = performance.now()
-        })
-      }
-      postMessage(message: any, options?: any) {
-        if ((message?.cmd === 'request' || message?.cmd === 'sendAsync') && message.stamp !== undefined) {
-          this.rpcStamps.add(message.stamp)
-          lastActivity = performance.now()
-        }
-        super.postMessage(message, options)
-      }
-      terminate() {
-        requests.delete(this.rpcStamps)
-        super.terminate()
-      }
-    }
-  })
-  await page.addInitScript(() => {
     ;(window as any).__IS_E2E_TEST__ = true
     ;(window as any).__REMIX_COMPILER_URLS__ = {
       binURL: `${location.origin}/__monad-tests__`, wasmURL: `${location.origin}/__monad-tests__`
@@ -87,8 +59,6 @@ export async function waitForIde(page: Page) {
 }
 
 async function selectVM(page: Page, option: Locator) {
-  // Finish account refreshes before replacing their VM worker.
-  await page.waitForFunction(() => (window as any).__monadTestVmIdle(), undefined, { timeout: 60_000, polling: 50 })
   const previous = await page.evaluateHandle(() => (window as any).__remixVM_web3)
   try {
     await option.click()

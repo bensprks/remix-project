@@ -104,6 +104,12 @@ self.onmessage = (e: MessageEvent) => {
           })
         }
       })
+    } else {
+      self.postMessage({
+        cmd: 'newAccountResult',
+        error: 'Provider not instantiated',
+        stamp: data.stamp
+      })
     }
 
     break

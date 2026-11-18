@@ -8,6 +8,7 @@ import { format } from 'util'
 import { ExecutionContext } from './execution-context'
 import Config from '../config'
 import { VMProvider } from './providers/vm'
+import { EnvironmentReplacedError } from './providers/vm-worker-client'
 import { InjectedProvider } from './providers/injected'
 import { NodeProvider } from './providers/node'
 import { execution, EventManager, helpers } from '@remix-project/remix-lib'
@@ -50,6 +51,7 @@ export class Blockchain extends Plugin {
   config: Config
   txRunner: any // TxRunner
   networkcallid: number
+  contextLoads: number
   networkStatus: {
     network: {
       name: string
@@ -77,6 +79,7 @@ export class Blockchain extends Plugin {
     this.events = new EventEmitter()
     this.config = config
     this.networkcallid = 0
+    this.contextLoads = 0
     this.registeredPluginEvents = []
     // the first item in the list should be latest fork.
     this.defaultPinnedProviders = ['vm-osaka', 'vm-prague', 'vm-cancun', 'vm-monad-eight', 'vm-monad-nine', 'vm-monad-ten', 'vm-monad-next', 'vm-mainnet-fork', 'walletconnect', 'injected-MetaMask', 'basic-http-provider', 'hardhat-provider', 'foundry-provider', 'desktopHost']
@@ -157,7 +160,13 @@ export class Blockchain extends Plugin {
     this.executionContext.event.register('contextChanged', async (context) => {
       if (!this.isWorkspaceLoaded) return
       // reset environment to last known state of the context
-      await this.loadContext(context)
+      try {
+        await this.loadContext(context)
+      } catch (error) {
+        // a context selected meanwhile is being loaded and reports its own change.
+        if (error instanceof EnvironmentReplacedError) return
+        throw error
+      }
       this._triggerEvent('contextChanged', [context])
       const network = await this.detectNetwork()
       this.networkStatus = { network, error: null }
@@ -759,23 +768,29 @@ export class Blockchain extends Plugin {
 
   async loadContext(context: string) {
     const saveEvmState = this.config.get('settings/save-evm-state')
+    // Reading a saved state takes time: a context loaded meanwhile replaces this one.
+    const load = ++this.contextLoads
+    const resetEnvironment = (stateDb?: string) => {
+      if (load !== this.contextLoads) throw new EnvironmentReplacedError()
+      return this.getCurrentProvider().resetEnvironment(stateDb)
+    }
 
     if (saveEvmState) {
       const contextExists = await this.call('fileManager', 'exists', `.states/${context}/state.json`)
       if (contextExists) {
         const stateDb = await this.call('fileManager', 'readFile', `.states/${context}/state.json`)
-        await this.getCurrentProvider().resetEnvironment(stateDb)
+        await resetEnvironment(stateDb)
       } else {
         // check if forked VM state is used as provider
         const stateName = context.replace('vm-fs-', '')
         const contextExists = await this.call('fileManager', 'exists', `.states/forked_states/${stateName}.json`)
         if (contextExists) {
           const stateDb = await this.call('fileManager', 'readFile', `.states/forked_states/${stateName}.json`)
-          await this.getCurrentProvider().resetEnvironment(stateDb)
-        } else await this.getCurrentProvider().resetEnvironment()
+          await resetEnvironment(stateDb)
+        } else await resetEnvironment()
       }
     } else {
-      await this.getCurrentProvider().resetEnvironment()
+      await resetEnvironment()
     }
 
     // Expose web3 for QuickDapp bridge (bypasses plugin queue)

@@ -2,22 +2,20 @@ import { privateToAddress, bytesToHex } from '@ethereumjs/util'
 import { extendProvider, JSONRPCRequestPayload, JSONRPCResponseCallback } from '@remix-project/remix-simulator'
 import { ExecutionContext } from '../execution-context'
 import { BrowserProvider, formatUnits, ethers, hashMessage, toUtf8Bytes, keccak256 } from 'ethers'
-import { deserializeRpcError } from './worker-rpc-error'
+import { EnvironmentReplacedError, VMWorkerClient } from './vm-worker-client'
 
 export class VMProvider {
   executionContext: ExecutionContext
   web3: BrowserProvider
-  worker: Worker
   provider: {
     sendAsync: (query: JSONRPCRequestPayload, callback: JSONRPCResponseCallback) => void
     request: (query: JSONRPCRequestPayload) => Promise<any>
   }
-  newAccountCallback: {[stamp: number]: (error: Error, address: string) => void}
+  private client: VMWorkerClient
   constructor (executionContext: ExecutionContext) {
     this.executionContext = executionContext
-    this.worker = null
+    this.client = null
     this.provider = null
-    this.newAccountCallback = {}
   }
 
   getAccounts (cb) {
@@ -29,108 +27,52 @@ export class VMProvider {
   }
 
   async resetEnvironment (stringifiedState?: string) {
-    if (this.worker) this.worker.terminate()
-    this.worker = new Worker(new URL('./worker-vm', import.meta.url))
+    // The current VM is discarded with its state, so the requests it has not answered fail here.
+    if (this.client) this.client.close()
     const provider = this.executionContext.getProviderObject()
-
-    let incr = 0
-    const stamps = {}
-
-    return new Promise((resolve, reject) => {
-      this.worker.addEventListener('message', (msg) => {
-        msg.data.error = deserializeRpcError(msg.data.error)
-        if (msg.data.cmd === 'requestResult' && stamps[msg.data.stamp]) {
-          if (msg.data.error) {
-            stamps[msg.data.stamp].reject(msg.data.error)
-          } else {
-            stamps[msg.data.stamp].resolve(msg.data.result)
-          }
-        } else if (msg.data.cmd === 'sendAsyncResult' && stamps[msg.data.stamp]) {
-          if (stamps[msg.data.stamp].callback) {
-            stamps[msg.data.stamp].callback(msg.data.error, msg.data.result)
-            return
-          }
-          if (msg.data.error) {
-            stamps[msg.data.stamp].reject(msg.data.error)
-          } else {
-            stamps[msg.data.stamp].resolve(msg.data.result)
-          }
-        } else if (msg.data.cmd === 'initiateResult') {
-          if (!msg.data.error) {
-            this.provider = {
-              sendAsync: (query, callback) => {
-                return new Promise((resolve, reject) => {
-                  const stamp = Date.now() + incr
-                  incr++
-                  stamps[stamp] = { callback, resolve, reject }
-                  this.worker.postMessage({ cmd: 'sendAsync', query, stamp })
-                })
-              },
-              request: (query) => {
-                return new Promise((resolve, reject) => {
-                  const stamp = Date.now() + incr
-                  incr++
-                  stamps[stamp] = { resolve, reject }
-                  this.worker.postMessage({ cmd: 'request', query, stamp })
-                })
-              }
-            }
-            this.web3 = new ethers.BrowserProvider(this.provider)
-            extendProvider(this.web3)
-            this.executionContext.setWeb3(this.executionContext.getProvider(), this.web3)
-            resolve({})
-          } else {
-            reject(msg.data.error instanceof Error ? msg.data.error : new Error(msg.data.error))
-          }
-        } else if (msg.data.cmd === 'newAccountResult') {
-          if (this.newAccountCallback[msg.data.stamp]) {
-            this.newAccountCallback[msg.data.stamp](msg.data.error, msg.data.result)
-            delete this.newAccountCallback[msg.data.stamp]
-          }
-        }
-      })
-      if (stringifiedState) {
-        try {
-          const blockchainState = JSON.parse(stringifiedState)
-          const blockNumber = parseInt(blockchainState.latestBlockNumber, 16)
-          const stateDb = blockchainState.db
-
-          this.worker.postMessage({
-            cmd: 'init',
-            fork: this.executionContext.getCurrentFork(),
-            nodeUrl: blockchainState.nodeUrl || provider?.options['nodeUrl'],
-            blockNumber,
-            stateDb,
-            baseBlockNumer: blockchainState.baseBlockNumber,
-            blocks: blockchainState.blocks
-          })
-        } catch (e) {
-          console.error(e)
-        }
-      } else {
-        this.worker.postMessage({
-          cmd: 'init',
-          fork: this.executionContext.getCurrentFork(),
-          nodeUrl: provider?.options['nodeUrl'],
-          blockNumber: provider?.options['blockNumber']
-        })
-      }
-    })
+    const options: Record<string, any> = {
+      fork: this.executionContext.getCurrentFork(),
+      nodeUrl: provider?.options['nodeUrl'],
+      blockNumber: provider?.options['blockNumber']
+    }
+    if (stringifiedState) {
+      const blockchainState = JSON.parse(stringifiedState)
+      options.nodeUrl = blockchainState.nodeUrl || options.nodeUrl
+      options.blockNumber = parseInt(blockchainState.latestBlockNumber, 16)
+      options.stateDb = blockchainState.db
+      options.baseBlockNumer = blockchainState.baseBlockNumber
+      options.blocks = blockchainState.blocks
+    }
+    const client = this.client = new VMWorkerClient(new Worker(new URL('./worker-vm', import.meta.url)))
+    try {
+      await client.init(options)
+    } catch (error) {
+      client.close()
+      throw error instanceof Error ? error : new Error(error)
+    }
+    // A reset started while this VM was initializing has closed it and publishes its own.
+    if (this.client !== client) throw new EnvironmentReplacedError()
+    this.provider = {
+      sendAsync: (query, callback) => client.sendAsync(query, callback),
+      request: (query) => client.request(query)
+    }
+    this.web3 = new ethers.BrowserProvider(this.provider)
+    extendProvider(this.web3)
+    this.executionContext.setWeb3(this.executionContext.getProvider(), this.web3)
+    return {}
   }
 
   // TODO: is still here because of the plugin API
   // can be removed later when we update the API
   createVMAccount (newAccount) {
     const { privateKey, balance } = newAccount
-    this.worker.postMessage({ cmd: 'addAccount', privateKey: privateKey, balance })
+    this.client.addAccount(privateKey, balance)
     const privKey: any = Buffer.from(privateKey, 'hex')
     return bytesToHex(privateToAddress(privKey))
   }
 
   newAccount (_passwordPromptCb, cb) {
-    const stamp = Date.now()
-    this.newAccountCallback[stamp] = cb
-    this.worker.postMessage({ cmd: 'newAccount', stamp })
+    this.client.newAccount(cb)
   }
 
   async getBalanceInEther (address) {
