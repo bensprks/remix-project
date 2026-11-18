@@ -18,7 +18,7 @@ This is a local development VM with synthetic blocks and receipts. Remote RPC fo
 
 ## Test
 
-Run `yarn test:monad:ui` for chain ID consistency, signed transactions, save/restore, account-preference isolation and exact MON formatting. For browser regressions:
+Run `yarn test:monad:ui` for chain ID consistency, signed transactions, save/restore, account-preference isolation, exact MON formatting, revert data crossing the VM worker and the requests of a replaced worker. For browser regressions:
 
 ```sh
 yarn nx build remix-ide --configuration=development
@@ -26,4 +26,4 @@ yarn playwright install chromium
 yarn test:monad:browser
 ```
 
-The browser tests cover fork-specific VM badges, chain IDs, account aliases, payable deployments and transaction currency on all four Monad forks and Ethereum Osaka, using the installed Solidity compiler.
+The browser tests cover fork-specific VM badges, chain IDs, account aliases, payable deployments and transaction currency on all four Monad forks and Ethereum Osaka, using the installed Solidity compiler. They also cover MON formatting in a named fork, decoded custom errors from reverted calls, and switching environments while requests are in flight.
